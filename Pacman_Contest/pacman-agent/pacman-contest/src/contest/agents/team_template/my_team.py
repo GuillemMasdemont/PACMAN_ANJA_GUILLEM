@@ -76,7 +76,7 @@ class ReflexCaptureAgent(CaptureAgent):
 
         # You can profile your evaluation time by uncommenting these lines
         # start = time.time()
-        values = [self.evaluate(game_state, a) for a in actions]
+        values = [self.MC_evaluate(game_state, a, num_simulations=10) for a in actions]
         # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
 
         max_value = max(values)
@@ -117,7 +117,25 @@ class ReflexCaptureAgent(CaptureAgent):
         features = self.get_features(game_state, action)
         weights = self.get_weights(game_state, action)
         return features * weights
-
+    
+    def MC_evaluate(self, game_state, action, num_simulations=10, gamma=0.9):
+        """
+        Monte Carlo evaluation of an action by simulating random play
+        """
+        total_score = 0
+        for _ in range(num_simulations):
+            successor = self.get_successor(game_state, action)
+            current_state = successor
+            for j in range(10):  # Simulate 10 steps
+                legal_actions = current_state.get_legal_actions(self.index)
+                if not legal_actions:
+                    break
+                random_action = random.choice(legal_actions)
+                current_state = self.get_successor(current_state, random_action)
+            total_score += self.get_score(current_state) * (gamma ** j)
+        average_score = total_score / num_simulations
+        return average_score
+    
     def get_features(self, game_state, action):
         """
         Returns a counter of features for the state
@@ -146,18 +164,31 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         features = util.Counter()
         successor = self.get_successor(game_state, action)
         food_list = self.get_food(successor).as_list()
-        features['successor_score'] = -len(food_list)  # self.get_score(successor)
+        enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
+        visible_enemies = [e for e in enemies if e.get_position() is not None]
+        my_pos = successor.get_agent_state(self.index).get_position()
+        enemy_ghosts = [self.get_maze_distance(my_pos, e.get_position()) for e in visible_enemies if not e.is_pacman and e.get_position() is not None]
+        useless_position = 0
+        print(self.red)
+        print(my_pos[0])
+        if (my_pos[0] == 0.0 and self.red) or (my_pos[0] == game_state.data.layout.width -1 and not self.red):
+            features['useless_position'] = 1  # Avoid staying on the edge
 
         # Compute distance to the nearest food
 
         if len(food_list) > 0:  # This should always be True,  but better safe than sorry
-            my_pos = successor.get_agent_state(self.index).get_position()
             min_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
             features['distance_to_food'] = min_distance
+        
+        if len(enemy_ghosts) > 0:
+            closest_ghost_dist = min(enemy_ghosts)
+            if closest_ghost_dist <= 3:
+                features['ghost_distance'] += 1  # Avoid the ghost
+        
         return features
 
     def get_weights(self, game_state, action):
-        return {'successor_score': 100, 'distance_to_food': -1}
+        return {'successor_score': 100, 'distance_to_food': -1, 'no_ghosts': -10, 'useless_position': -100}
 
 
 class DefensiveReflexAgent(ReflexCaptureAgent):
@@ -175,6 +206,7 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         my_state = successor.get_agent_state(self.index)
         my_pos = my_state.get_position()
 
+        features['centrality'] = -self.get_maze_distance(my_pos, (game_state.data.layout.width // 2, game_state.data.layout.height // 2))
         # Computes whether we're on defense (1) or offense (0)
         features['on_defense'] = 1
         if my_state.is_pacman: features['on_defense'] = 0
@@ -186,6 +218,7 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         if len(invaders) > 0:
             dists = [self.get_maze_distance(my_pos, a.get_position()) for a in invaders]
             features['invader_distance'] = min(dists)
+        
 
         if action == Directions.STOP: features['stop'] = 1
         rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
@@ -194,4 +227,7 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         return features
 
     def get_weights(self, game_state, action):
-        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2}
+        centrality_weight = 0
+        if len(self.get_invaders(game_state)) == 0:
+            centrality_weight = 4
+        return {'centrality': centrality_weight,'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2}

@@ -178,7 +178,6 @@ class ReflexCaptureAgent(CaptureAgent):
         a = max_agent(game_state, self.index, 0)[1]
         print(counter)
         return a
-
         """
 
         #Implement as function that prices agents that are separated, or than can cover more terrain.
