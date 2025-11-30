@@ -244,14 +244,14 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
   """
     def reward(self, game_state, index, action):
 
-        # def is_dead_end(pos):
-        #     walls = game_state.get_walls()
-        #     x, y = my_pos
-        #     open_directions = 0
-        #     for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-        #         if not walls[int(x + dx)][int(y + dy)]:
-        #             open_directions += 1
-        #     return open_directions == 1  # Dead end if only one open direction
+        def is_dead_end(pos):
+            walls = game_state.get_walls()
+            x, y = my_pos
+            open_directions = 0
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                if not walls[int(x + dx)][int(y + dy)]:
+                    open_directions += 1
+            return open_directions == 1  # Dead end if only one open direction
 
         successor = game_state.generate_successor(index, action)
         reward = 0
@@ -299,7 +299,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         if (game_state.get_agent_state(self.index).is_pacman) and len(distances) > 0:
             min_distance = min(distances)
             if min_distance <= 3:
-                reward -= 10 * (4 - min_distance)  # closer ghost penalizes more
+                reward -= 5 * (4 - min_distance)  # closer ghost penalizes more
 
         ate_food = False
         for food_pos in food:
@@ -307,37 +307,45 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
                 ate_food = True
                 break   
         if ate_food:
-            reward += 50
+            reward += 30
 
         # reward for getting closer to food
         if len(food) > 0:
             min_distance_before = min([self.get_maze_distance(prev_pos, food_pos) for food_pos in food])
             min_distance_after = min([self.get_maze_distance(my_pos, food_pos) for food_pos in food])
             if min_distance_after < min_distance_before:
-                reward += 10
+                reward += 5
 
         # # avoid dead ends when ghosts are nearby
-        # ghost_positions = [game_state.get_agent_state(opponent_idx).get_position() for opponent_idx in self.get_opponents(game_state) if game_state.get_agent_state(opponent_idx).get_position() is not None and not game_state.get_agent_state(opponent_idx).is_pacman]
-        # for ghost_pos in ghost_positions:
-        #     dist_to_ghost = self.get_maze_distance(my_pos, ghost_pos)
-        #     if dist_to_ghost <= 3 and is_dead_end(my_pos):
-        #         reward -= 15  # penalize dead ends when ghosts are close
+        ghost_positions = [game_state.get_agent_state(opponent_idx).get_position() for opponent_idx in self.get_opponents(game_state) if game_state.get_agent_state(opponent_idx).get_position() is not None and not game_state.get_agent_state(opponent_idx).is_pacman]
+        for ghost_pos in ghost_positions:
+            dist_to_ghost = self.get_maze_distance(my_pos, ghost_pos)
+            if dist_to_ghost <= 3 and is_dead_end(my_pos):
+                reward -= 40  # penalize dead ends when ghosts are close
     
 
         distance_to_own_side = 1e-5
         mid_width = game_state.data.layout.width // 2
         distance_to_own_side = abs(my_pos[0] - mid_width)
 
+        #game_state.get_agent_state(self.index).pellets_carried
+
         #reward for depositing food, especially when closer to own side.
-        if game_state.get_agent_state(self.index).is_pacman and (self.red and successor.get_score() > game_state.get_score()) or (not self.red and successor.get_score() > game_state.get_score()):
+        if game_state.get_agent_state(self.index).is_pacman and game_state.get_agent_state(self.index).num_carrying > 0:
             multiplier = 200 * 1/(distance_to_own_side + 1)**2
             print('Deposit multiplier:', multiplier)
             score_diff = (successor.get_score() - game_state.get_score())
+            #reward for depositiing
             if score_diff > 0 and self.red:
-                print(multiplier * (score_diff)**2)
-                reward += multiplier * (score_diff)**2
+                print (multiplier * (score_diff+1)**2)
+                reward += multiplier * (score_diff+1)**2
             elif score_diff < 0 and not self.red:
-                reward += multiplier * (score_diff)**2
+                reward += multiplier * (score_diff-1)**2
+            #reward for getting closer to own side when carrying food
+            if self.red and my_pos[0] < prev_pos[0]:
+                reward += multiplier * 0.1
+            elif not self.red and my_pos[0] > prev_pos[0]:
+                reward += multiplier * 0.1
 
         #penalise stopping 
         if action == Directions.STOP:
