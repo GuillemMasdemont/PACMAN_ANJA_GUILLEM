@@ -34,7 +34,7 @@ from util import nearest_point
 #################
 
 def create_team(first_index, second_index, is_red,
-                first='OffensiveReflexAgent', second='DefensiveReflexAgent', num_training=0):
+                first='OffensiveReflexAgent', second='OffensiveReflexAgent2', num_training=0):
     """
     This function should return a list of two agents that will form the
     team, initialized using firstIndex and secondIndex as their agent
@@ -69,12 +69,21 @@ class ReflexCaptureAgent(CaptureAgent):
         self.trajectory = []
         self.recent_positions = []
         self.start_strategy = True
+        self.start_strategy_2 = True
         self.going_home = False
+        self.home_base_position = None
 
     def register_initial_state(self, game_state):
         self.start = game_state.get_agent_position(self.index)
         CaptureAgent.register_initial_state(self, game_state)
 
+        # At the start of the game, identify the capsule on our side as the home base.
+        # Fallback to start position if no capsules are on our side.
+        our_capsules = self.get_capsules_you_are_defending(game_state)
+        if len(our_capsules) > 0:
+            self.home_base_position = our_capsules[0]
+        else:
+            self.home_base_position = self.start
 
     def choose_action(self, game_state):
         """
@@ -267,6 +276,18 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         food = self.get_food(game_state).as_list()
         my_state = successor.get_agent_state(self.index)
         my_pos = successor.get_agent_state(self.index).get_position()
+        prev_pos = game_state.get_agent_state(self.index).get_position()
+
+        # If no food is left, go home with a very strong reward
+        if len(food) == 0:
+            # Head to the pre-determined home base position
+            dist_to_target_before = self.get_maze_distance(prev_pos, self.home_base_position)
+            dist_to_target_after = self.get_maze_distance(my_pos, self.home_base_position)
+            if dist_to_target_after < dist_to_target_before:
+                reward += 200
+            elif dist_to_target_after == 0: # Reward for staying at the target
+                reward += 100
+            return reward # Prioritize this over all other behaviors
 
         # Reward for eating or not eating pacman: 
         # Case we eat him: 
@@ -281,7 +302,6 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
                 reward -= 1000 #we have been eaten. 
                 self.start_strategy = True
 
-        prev_pos = game_state.get_agent_state(self.index).get_position()
         if my_pos == prev_pos:
             reward -= 3  # discourage idling
         else:
@@ -334,7 +354,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
                 min_distance_before = min([self.get_maze_distance(prev_pos, food_pos) for food_pos in food])
                 min_distance_after = min([self.get_maze_distance(my_pos, food_pos) for food_pos in food])
             if min_distance_after < min_distance_before:
-                    food_score += 5
+                    food_score += 10.2
 
         distance_to_own_side = 1e-5
         mid_width = game_state.data.layout.width // 2
@@ -358,6 +378,8 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
                      score_score += deposit_priority * 0.01
                 elif not self.red and my_pos[0] > prev_pos[0]:
                     score_score += deposit_priority * 0.01
+
+
         reward += food_score + ghost_score + score_score
 
         return reward
@@ -386,7 +408,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         return weights
 
 
-class DefensiveReflexAgent(ReflexCaptureAgent):
+class OffensiveReflexAgent2(ReflexCaptureAgent):
     """
     A reflex agent that keeps its side Pacman-free. Again,
     this is to give you an idea of what a defensive agent
@@ -396,13 +418,38 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
 
     def reward(self, game_state, index, action):
 
+        def is_dead_end(pos):
+            walls = game_state.get_walls()
+            x, y = pos
+            open_directions = 0
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                if not walls[int(x + dx)][int(y + dy)]:
+                    open_directions += 1
+            return open_directions == 1  # Dead end if only one open direction
+
         successor = game_state.generate_successor(index, action)
         reward = 0
 
-        # Reward for eating or not eating pacman: 
+
         my_team = self.get_team(game_state)
         opponents = self.get_opponents(game_state)
+        food = self.get_food(game_state).as_list()
+        my_state = successor.get_agent_state(self.index)
+        my_pos = successor.get_agent_state(self.index).get_position()
+        prev_pos = game_state.get_agent_state(self.index).get_position()
 
+        # If no food is left, go home with a very strong reward
+        if len(food) == 0:
+            # Head to the pre-determined home base position
+            dist_to_target_before = self.get_maze_distance(prev_pos, self.home_base_position)
+            dist_to_target_after = self.get_maze_distance(my_pos, self.home_base_position)
+            if dist_to_target_after < dist_to_target_before:
+                reward += 200
+            elif dist_to_target_after == 0: # Reward for staying at the target
+                reward += 100
+            return reward # Prioritize this over all other behaviors
+
+        # Reward for eating or not eating pacman: 
         # Case we eat him: 
         if index in my_team:
             for opponent_idx in opponents:
@@ -413,55 +460,117 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
         elif index in opponents:
             if game_state.get_agent_state(index).is_pacman and not successor.get_agent_state(index).is_pacman:
                 reward -= 1000 #we have been eaten. 
+                self.start_strategy = True
 
-        
-        # Reward for getting closer to an enemy invader
-        for opponent_idx in self.get_opponents(game_state):
-            opponent_state = game_state.get_agent_state(opponent_idx)
-            
-            if opponent_state.is_pacman and opponent_state.get_position() is not None:
-                my_pos = game_state.get_agent_state(self.index).get_position()
-                successor_pos = successor.get_agent_state(self.index).get_position()
-                opponent_pos = opponent_state.get_position()
-                dist_before = self.get_maze_distance(my_pos, opponent_pos)
-                dist_after = self.get_maze_distance(successor_pos, opponent_pos)
-                if dist_after < dist_before:
-                    reward += 100  
+        if my_pos == prev_pos:
+            reward -= 3  # discourage idling
+        else:
+            reward += 0.5  # small reward for exploring new tiles
 
-        # if you cant see an invader, follow disappearing food
-        invaders = [game_state.get_agent_state(opponent_idx) for opponent_idx in self.get_opponents(game_state) if game_state.get_agent_state(opponent_idx).is_pacman]
-        if len(invaders) == 0:
-            food = self.get_food_you_are_defending(game_state).as_list()
-            disappearing_food = []
-            for food_pos in food:
-                if game_state.get_agent_state(self.index).get_position() == food_pos and not successor.get_agent_state(self.index).get_position() == food_pos:
-                    disappearing_food.append(food_pos)
-            if len(disappearing_food) > 0:
-                my_pos = successor.get_agent_state(self.index).get_position()
-                dists = [self.get_maze_distance(my_pos, food_pos) for food_pos in disappearing_food]
-                if len(dists) > 0:
-                    min_dist = min(dists)
-                    reward += 10 / (min_dist + 1)
-    
+        # reward for eating cookie
+        food_score = 0
+        ghost_score = 0
+        score_score = 0
+        ate_capsule = False
+        capsules = self.get_capsules(game_state)
+        for cap_pos in capsules:
+            if my_pos == cap_pos:
+                ate_capsule = True
+                break   
+        if ate_capsule:
+            food_score += 100 
+
+        ghost_distances = [self.get_maze_distance(successor.get_agent_state(self.index).get_position(), game_state.get_agent_state(opponent_idx).get_position()) for opponent_idx in self.get_opponents(game_state) if game_state.get_agent_state(opponent_idx).get_position() is not None and game_state.get_agent_state(opponent_idx).is_pacman == False and game_state.get_agent_state(opponent_idx).scared_timer == 0]
+        if (game_state.get_agent_state(self.index).is_pacman) and len(ghost_distances) > 0:
+            min_distance = min(ghost_distances)
+            if min_distance <= 3:
+                ghost_score -= 5 * (4 - min_distance)  # closer ghost penalizes more
+                if is_dead_end(my_pos):
+                    ghost_score -= 20  # heavy penalty for going into dead ends
+
+        # reward for eating food
+        ate_food = False
+        for food_pos in food:
+            if game_state.get_agent_state(self.index).get_position() == food_pos and not successor.get_agent_state(self.index).get_position() == food_pos:
+                ate_food = True
+                break   
+        if ate_food:
+            food_score += 30
+
+        map_height = game_state.get_walls().height
+
+        # reward for getting closer to food
+        if len(food) > 0:
+            if self.start_strategy_2:
+                if (self.red):
+                    min_distance_before = min([self.get_maze_distance(prev_pos, food_pos) for food_pos in food if food_pos[1] < map_height // 2])
+                    min_distance_after = min([self.get_maze_distance(my_pos, food_pos) for food_pos in food if food_pos[1] < map_height // 2])
+                else:
+                    min_distance_before = min([self.get_maze_distance(prev_pos, food_pos) for food_pos in food if food_pos[1] > map_height // 2])
+                    min_distance_after = min([self.get_maze_distance(my_pos, food_pos) for food_pos in food if food_pos[1] > map_height // 2])
+                if (my_state.is_pacman):
+                    self.start_strategy_2 = False
+            else:
+                min_distance_before = min([self.get_maze_distance(prev_pos, food_pos) for food_pos in food])
+                min_distance_after = min([self.get_maze_distance(my_pos, food_pos) for food_pos in food])
+            if min_distance_after < min_distance_before:
+                    food_score += 10
+
+        distance_to_own_side = 1e-5
+        mid_width = game_state.data.layout.width // 2
+        distance_to_own_side = abs(my_pos[0] - mid_width)
+
+
+        #reward for depositing food, especially when closer to own side.
+        carried_pellets = game_state.get_agent_state(self.index).num_carrying
+        if game_state.get_agent_state(self.index).is_pacman and carried_pellets > 0:
+            deposit_priority = 40 * (1/(distance_to_own_side + 1)) + 100 * carried_pellets
+            #print('Deposit multiplier:', deposit_priority)
+            score_diff = successor.get_score() - game_state.get_score()
+            #reward for depositiing
+            if score_diff > 0 and self.red:
+                score_score += deposit_priority 
+            elif score_diff < 0 and not self.red:
+                print("reached")
+                score_score += deposit_priority 
+            # reward for getting closer to own side when carrying food
+            if not (is_dead_end(my_pos)):
+                if self.red and my_pos[0] < prev_pos[0]:
+                     score_score += deposit_priority * 0.01
+                elif not self.red and my_pos[0] > prev_pos[0]:
+                    score_score += deposit_priority * 0.01
+
+        # Small persistent reward for staying in the designated half of the map
+        # Agent 2: Red -> Bottom, Blue -> Top
+        if self.red:
+            if my_pos[1] < map_height // 4:
+                reward += 2
+        elif my_pos[1] > map_height // 4:
+            reward += 2
+
+        reward += food_score + ghost_score + score_score
+
         return reward
+    
 
     def get_features(self, game_state, action):
         features = util.Counter()
-        
         successor = self.get_successor(game_state, action)
-        my_pos = successor.get_agent_state(self.index).get_position()
+        food_list = self.get_food(successor).as_list()
+        features['successor_score'] = -len(food_list)  # self.get_score(successor)
 
-        center_x = game_state.get_walls().width // 2
-        center_y = game_state.get_walls().height // 2
-        
-        center_pos = (center_x, center_y)
-
-        if game_state.has_wall(center_pos[0], center_pos[1]):
-            pass 
-
-        features['distance_to_center'] = self.get_maze_distance(my_pos, center_pos)
-
+        if len(food_list) > 0:  # This should always be True,  but better safe than sorry
+            my_pos = successor.get_agent_state(self.index).get_position()
+            min_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
+            features['distance_to_food'] = min_distance
         return features
 
     def get_weights(self, game_state, action):
-        return {'distance_to_center': -5}
+
+        weights = {'successor_score': 100, 'distance_to_food': -1}
+        my_state = game_state.get_agent_state(self.index)
+        if my_state.is_pacman and my_state.num_carrying > 2:
+            # prioritize safety
+            weights['distance_to_food'] = -0.2
+            weights['successor_score'] = 50
+        return weights
